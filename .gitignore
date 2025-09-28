@@ -1,6 +1,10 @@
 # Node modules
 /node_modules
 
+/ignition
+/scripts
+/test
+
 # Compilation output
 /dist
 
