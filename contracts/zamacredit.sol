@@ -165,7 +165,7 @@ contract RiskScore is SepoliaZamaFHEVMConfig {
         euint32 pulse = FHE.fromExternal(encryptedPulse, inputProof);
         euint32 age = FHE.fromExternal(encryptedAge, inputProof);
         euint8 gender = FHE.fromExternal(encryptedGender, inputProof);
-        
+        euint32 initialRiskScore = FHE.fromExternal(0,inputProof);
         // Store encrypted health data
         userHealthData[msg.sender][insuranceCompany] = HealthData({
             height: height,
@@ -180,7 +180,7 @@ contract RiskScore is SepoliaZamaFHEVMConfig {
             pulseRate: pulse,
             age: age,
             gender: gender,
-            riskScore: FHE.encryptUint32(0),
+            riskScore: initialRiskScore,
             dataSubmitted: true,
             scoreComputed: false
         });
