@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 pragma solidity ^0.8.24;
 
-import "fhevm/lib/TFHE.sol";
+import "@fhevm/solidity/lib/FHE.sol";
 import "fhevm/config/ZamaFHEVMConfig.sol";
 
 /**
@@ -135,36 +135,36 @@ contract RiskScore is SepoliaZamaFHEVMConfig {
      */
     function submitHealthData(
         address insuranceCompany,
-        einput encryptedHeight,
-        einput encryptedWeight,
-        einput encryptedSystolic,
-        einput encryptedDiastolic,
-        einput encryptedHDL,
-        einput encryptedLDL,
-        einput encryptedTriglycerides,
-        einput encryptedTotalChol,
-        einput encryptedBloodSugar,
-        einput encryptedPulse,
-        einput encryptedAge,
-        einput encryptedGender,
+        externalEuint32 encryptedHeight,
+        externalEuint32 encryptedWeight,
+        externalEuint32 encryptedSystolic,
+        externalEuint32 encryptedDiastolic,
+        externalEuint32 encryptedHDL,
+        externalEuint32 encryptedLDL,
+        externalEuint32 encryptedTriglycerides,
+        externalEuint32 encryptedTotalChol,
+        externalEuint32 encryptedBloodSugar,
+        externalEuint32 encryptedPulse,
+        externalEuint32 encryptedAge,
+        externalEuint8 encryptedGender,
         bytes calldata inputProof
     ) external {
         require(insuranceCompanies[insuranceCompany].isRegistered, "Insurance company not registered");
         require(!userHealthData[msg.sender][insuranceCompany].dataSubmitted, "Data already submitted");
         
         // Convert encrypted inputs to euint types with verification
-        euint32 height = TFHE.asEuint32(encryptedHeight, inputProof);
-        euint32 weight = TFHE.asEuint32(encryptedWeight, inputProof);
-        euint32 systolic = TFHE.asEuint32(encryptedSystolic, inputProof);
-        euint32 diastolic = TFHE.asEuint32(encryptedDiastolic, inputProof);
-        euint32 hdl = TFHE.asEuint32(encryptedHDL, inputProof);
-        euint32 ldl = TFHE.asEuint32(encryptedLDL, inputProof);
-        euint32 triglycerides = TFHE.asEuint32(encryptedTriglycerides, inputProof);
-        euint32 totalChol = TFHE.asEuint32(encryptedTotalChol, inputProof);
-        euint32 bloodSugar = TFHE.asEuint32(encryptedBloodSugar, inputProof);
-        euint32 pulse = TFHE.asEuint32(encryptedPulse, inputProof);
-        euint32 age = TFHE.asEuint32(encryptedAge, inputProof);
-        euint8 gender = TFHE.asEuint8(encryptedGender, inputProof);
+        euint32 height = FHE.fromExternal(encryptedHeight, inputProof);
+        euint32 weight = FHE.fromExternal(encryptedWeight, inputProof);
+        euint32 systolic = FHE.fromExternal(encryptedSystolic, inputProof);
+        euint32 diastolic = FHE.fromExternal(encryptedDiastolic, inputProof);
+        euint32 hdl = FHE.fromExternal(encryptedHDL, inputProof);
+        euint32 ldl = FHE.fromExternal(encryptedLDL, inputProof);
+        euint32 triglycerides = FHE.fromExternal(encryptedTriglycerides, inputProof);
+        euint32 totalChol = FHE.fromExternal(encryptedTotalChol, inputProof);
+        euint32 bloodSugar = FHE.fromExternal(encryptedBloodSugar, inputProof);
+        euint32 pulse = FHE.fromExternal(encryptedPulse, inputProof);
+        euint32 age = FHE.fromExternal(encryptedAge, inputProof);
+        euint8 gender = FHE.fromExternal(encryptedGender, inputProof);
         
         // Store encrypted health data
         userHealthData[msg.sender][insuranceCompany] = HealthData({
@@ -180,24 +180,24 @@ contract RiskScore is SepoliaZamaFHEVMConfig {
             pulseRate: pulse,
             age: age,
             gender: gender,
-            riskScore: TFHE.asEuint32(0),
+            riskScore: FHE.encryptUint32(0),
             dataSubmitted: true,
             scoreComputed: false
         });
         
         // Grant permissions for the contract to operate on the data
-        TFHE.allowThis(height);
-        TFHE.allowThis(weight);
-        TFHE.allowThis(systolic);
-        TFHE.allowThis(diastolic);
-        TFHE.allowThis(hdl);
-        TFHE.allowThis(ldl);
-        TFHE.allowThis(triglycerides);
-        TFHE.allowThis(totalChol);
-        TFHE.allowThis(bloodSugar);
-        TFHE.allowThis(pulse);
-        TFHE.allowThis(age);
-        TFHE.allowThis(gender);
+        FHE.allowThis(height);
+        FHE.allowThis(weight);
+        FHE.allowThis(systolic);
+        FHE.allowThis(diastolic);
+        FHE.allowThis(hdl);
+        FHE.allowThis(ldl);
+        FHE.allowThis(triglycerides);
+        FHE.allowThis(totalChol);
+        FHE.allowThis(bloodSugar);
+        FHE.allowThis(pulse);
+        FHE.allowThis(age);
+        FHE.allowThis(gender);
         
         emit HealthDataSubmitted(msg.sender, insuranceCompany, block.timestamp);
     }
@@ -214,63 +214,78 @@ contract RiskScore is SepoliaZamaFHEVMConfig {
         
         HealthData storage data = userHealthData[user][insuranceCompany];
         
-        // Calculate BMI: (weight * 10000) / (height * height)
-        euint32 heightSquared = TFHE.mul(data.height, data.height);
-        euint32 weightTimes10000 = TFHE.mul(data.weight, TFHE.asEuint32(10000));
-        euint32 bmi = TFHE.div(weightTimes10000, heightSquared);
-        
         // Initialize risk score
-        euint32 riskScore = TFHE.asEuint32(0);
+        euint32 riskScore;
         
         // Age factor (strongest factor): age * 2
-        euint32 ageScore = TFHE.mul(data.age, TFHE.asEuint32(2));
-        riskScore = TFHE.add(riskScore, ageScore);
+        euint32 ageScore = FHE.mul(data.age, 2);
+        riskScore = FHE.add(riskScore, ageScore);
         
         // Gender factor: male = +10, female = +0
-        euint32 genderScore = TFHE.mul(data.gender, TFHE.asEuint32(10));
-        riskScore = TFHE.add(riskScore, genderScore);
+        euint32 genderScore = FHE.mul(data.gender, 10);
+        riskScore = FHE.add(riskScore, genderScore);
         
-        // BMI factor: BMI > 30 = +20, BMI > 25 = +10
-        ebool bmiHigh = TFHE.gt(bmi, TFHE.asEuint32(30));
-        ebool bmiModerate = TFHE.gt(bmi, TFHE.asEuint32(25));
-        euint32 bmiScore = TFHE.select(bmiHigh, TFHE.asEuint32(20), 
-                           TFHE.select(bmiModerate, TFHE.asEuint32(10), TFHE.asEuint32(0)));
-        riskScore = TFHE.add(riskScore, bmiScore);
+        // Weight-based risk (simplified BMI approximation)
+        // High weight categories based on weight alone (simplified approach)
+        ebool heavyWeight = FHE.gt(data.weight, FHE.encryptUint32(90)); // >90kg = +20
+        ebool moderateWeight = FHE.gt(data.weight, FHE.encryptUint32(75)); // >75kg = +10
+        euint32 weightScore = FHE.select(heavyWeight, FHE.encryptUint32(20), 
+                             FHE.select(moderateWeight, FHE.encryptUint32(10), FHE.encryptUint32(0)));
+        riskScore = FHE.add(riskScore, weightScore);
+        
+        // Height-based adjustment (shorter height increases risk slightly)
+        ebool shortHeight = FHE.lt(data.height, FHE.encryptUint32(160)); // <160cm = +5
+        euint32 heightScore = FHE.select(shortHeight, FHE.encryptUint32(5), FHE.encryptUint32(0));
+        riskScore = FHE.add(riskScore, heightScore);
         
         // Blood pressure factor: systolic > 140 or diastolic > 90 = +15
-        ebool highSystolic = TFHE.gt(data.systolic, TFHE.asEuint32(140));
-        ebool highDiastolic = TFHE.gt(data.diastolic, TFHE.asEuint32(90));
-        ebool highBP = TFHE.or(highSystolic, highDiastolic);
-        euint32 bpScore = TFHE.select(highBP, TFHE.asEuint32(15), TFHE.asEuint32(0));
-        riskScore = TFHE.add(riskScore, bpScore);
+        ebool highSystolic = FHE.gt(data.systolic, FHE.encryptUint32(140));
+        ebool highDiastolic = FHE.gt(data.diastolic, FHE.encryptUint32(90));
+        ebool highBP = FHE.or(highSystolic, highDiastolic);
+        euint32 bpScore = FHE.select(highBP, FHE.encryptUint32(15), FHE.encryptUint32(0));
+        riskScore = FHE.add(riskScore, bpScore);
         
         // Cholesterol factor: LDL > 160 = +10, HDL < 40 = +10
-        ebool highLDL = TFHE.gt(data.ldlCholesterol, TFHE.asEuint32(160));
-        ebool lowHDL = TFHE.lt(data.hdlCholesterol, TFHE.asEuint32(40));
-        euint32 cholScore = TFHE.add(
-            TFHE.select(highLDL, TFHE.asEuint32(10), TFHE.asEuint32(0)),
-            TFHE.select(lowHDL, TFHE.asEuint32(10), TFHE.asEuint32(0))
+        ebool highLDL = FHE.gt(data.ldlCholesterol, FHE.encryptUint32(160));
+        ebool lowHDL = FHE.lt(data.hdlCholesterol, FHE.encryptUint32(40));
+        euint32 cholScore = FHE.add(
+            FHE.select(highLDL, FHE.encryptUint32(10), FHE.encryptUint32(0)),
+            FHE.select(lowHDL, FHE.encryptUint32(10), FHE.encryptUint32(0))
         );
-        riskScore = TFHE.add(riskScore, cholScore);
+        riskScore = FHE.add(riskScore, cholScore);
+        
+        // Triglycerides factor: > 200 = +8
+        ebool highTriglycerides = FHE.gt(data.triglycerides, FHE.encryptUint32(200));
+        euint32 trigScore = FHE.select(highTriglycerides, FHE.encryptUint32(8), FHE.encryptUint32(0));
+        riskScore = FHE.add(riskScore, trigScore);
+        
+        // Total cholesterol factor: > 240 = +12
+        ebool highTotalChol = FHE.gt(data.totalCholesterol, FHE.encryptUint32(240));
+        euint32 totalCholScore = FHE.select(highTotalChol, FHE.encryptUint32(12), FHE.encryptUint32(0));
+        riskScore = FHE.add(riskScore, totalCholScore);
         
         // Blood sugar factor: > 126 (diabetes) = +25, > 100 (prediabetes) = +10
-        ebool diabetes = TFHE.gt(data.bloodSugar, TFHE.asEuint32(126));
-        ebool prediabetes = TFHE.gt(data.bloodSugar, TFHE.asEuint32(100));
-        euint32 sugarScore = TFHE.select(diabetes, TFHE.asEuint32(25),
-                            TFHE.select(prediabetes, TFHE.asEuint32(10), TFHE.asEuint32(0)));
-        riskScore = TFHE.add(riskScore, sugarScore);
+        ebool diabetes = FHE.gt(data.bloodSugar, FHE.encryptUint32(126));
+        ebool prediabetes = FHE.gt(data.bloodSugar, FHE.encryptUint32(100));
+        euint32 sugarScore = FHE.select(diabetes, FHE.encryptUint32(25),
+                            FHE.select(prediabetes, FHE.encryptUint32(10), FHE.encryptUint32(0)));
+        riskScore = FHE.add(riskScore, sugarScore);
         
-        // Pulse rate factor: > 100 = +5
-        ebool highPulse = TFHE.gt(data.pulseRate, TFHE.asEuint32(100));
-        euint32 pulseScore = TFHE.select(highPulse, TFHE.asEuint32(5), TFHE.asEuint32(0));
-        riskScore = TFHE.add(riskScore, pulseScore);
+        // Pulse rate factor: > 100 = +5, < 50 = +3 (both extremes are risky)
+        ebool highPulse = FHE.gt(data.pulseRate, FHE.encryptUint32(100));
+        ebool lowPulse = FHE.lt(data.pulseRate, FHE.encryptUint32(50));
+        euint32 pulseScore = FHE.add(
+            FHE.select(highPulse, FHE.encryptUint32(5), FHE.encryptUint32(0)),
+            FHE.select(lowPulse, FHE.encryptUint32(3), FHE.encryptUint32(0))
+        );
+        riskScore = FHE.add(riskScore, pulseScore);
         
         // Store the computed risk score
         data.riskScore = riskScore;
         data.scoreComputed = true;
         
         // Allow contract to access the risk score
-        TFHE.allowThis(riskScore);
+        FHE.allowThis(riskScore);
         
         emit RiskScoreComputed(user, insuranceCompany, block.timestamp);
     }
@@ -284,7 +299,7 @@ contract RiskScore is SepoliaZamaFHEVMConfig {
         require(userHealthData[msg.sender][insuranceCompany].scoreComputed, "Risk score not computed");
         
         // Grant permission to insurance company to decrypt the risk score
-        TFHE.allow(userHealthData[msg.sender][insuranceCompany].riskScore, insuranceCompany);
+        FHE.allow(userHealthData[msg.sender][insuranceCompany].riskScore, insuranceCompany);
         
         // Record permission granted
         userPermissions[msg.sender][insuranceCompany] = true;
