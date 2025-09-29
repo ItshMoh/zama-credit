@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@fhevm/solidity/lib/FHE.sol";
 import "fhevm/config/ZamaFHEVMConfig.sol";
 
+
 /**
  * @title RiskScore
  * @notice Privacy-preserving health risk score calculation using FHE
@@ -24,7 +25,7 @@ contract RiskScore is SepoliaZamaFHEVMConfig {
         euint32 bloodSugar;      // HbA1c * 10 or fasting glucose (40-200)
         euint32 pulseRate;       // Pulse rate (40-150)
         euint32 age;             // Age in years (18-100)
-        euint8 gender;           // 0 = female, 1 = male
+        euint32 gender;           // 0 = female, 1 = male
         euint32 riskScore;       // Calculated risk score
         bool dataSubmitted;      // Track if data is submitted
         bool scoreComputed;      // Track if score is computed
@@ -146,7 +147,7 @@ contract RiskScore is SepoliaZamaFHEVMConfig {
         externalEuint32 encryptedBloodSugar,
         externalEuint32 encryptedPulse,
         externalEuint32 encryptedAge,
-        externalEuint8 encryptedGender,
+        externalEuint32 encryptedGender,
         bytes calldata inputProof
     ) external {
         require(insuranceCompanies[insuranceCompany].isRegistered, "Insurance company not registered");
@@ -164,8 +165,11 @@ contract RiskScore is SepoliaZamaFHEVMConfig {
         euint32 bloodSugar = FHE.fromExternal(encryptedBloodSugar, inputProof);
         euint32 pulse = FHE.fromExternal(encryptedPulse, inputProof);
         euint32 age = FHE.fromExternal(encryptedAge, inputProof);
-        euint8 gender = FHE.fromExternal(encryptedGender, inputProof);
-        euint32 initialRiskScore = FHE.fromExternal(0,inputProof);
+        euint32 gender = FHE.fromExternal(encryptedGender, inputProof); 
+       
+       // initialize risk score
+        euint32 initialRiskScore = FHE.asEuint32(0);
+
         // Store encrypted health data
         userHealthData[msg.sender][insuranceCompany] = HealthData({
             height: height,
@@ -208,87 +212,86 @@ contract RiskScore is SepoliaZamaFHEVMConfig {
      * @param insuranceCompany Address of the insurance company
      */ 
     function computeRiskScore(address user, address insuranceCompany) external {
-        require(insuranceCompanies[insuranceCompany].isRegistered, "Insurance company not registered");
-        require(userHealthData[user][insuranceCompany].dataSubmitted, "No health data submitted");
-        require(!userHealthData[user][insuranceCompany].scoreComputed, "Score already computed");
-        
-        HealthData storage data = userHealthData[user][insuranceCompany];
-        
-        // Initialize risk score
-        euint32 riskScore;
-        
-        // Age factor (strongest factor): age * 2
-        euint32 ageScore = FHE.mul(data.age, 2);
-        riskScore = FHE.add(riskScore, ageScore);
-        
-        // Gender factor: male = +10, female = +0
-        euint32 genderScore = FHE.mul(data.gender, 10);
-        riskScore = FHE.add(riskScore, genderScore);
-        
-        // Weight-based risk (simplified BMI approximation)
-        // High weight categories based on weight alone (simplified approach)
-        ebool heavyWeight = FHE.gt(data.weight, FHE.encryptUint32(90)); // >90kg = +20
-        ebool moderateWeight = FHE.gt(data.weight, FHE.encryptUint32(75)); // >75kg = +10
-        euint32 weightScore = FHE.select(heavyWeight, FHE.encryptUint32(20), 
-                             FHE.select(moderateWeight, FHE.encryptUint32(10), FHE.encryptUint32(0)));
-        riskScore = FHE.add(riskScore, weightScore);
-        
-        // Height-based adjustment (shorter height increases risk slightly)
-        ebool shortHeight = FHE.lt(data.height, FHE.encryptUint32(160)); // <160cm = +5
-        euint32 heightScore = FHE.select(shortHeight, FHE.encryptUint32(5), FHE.encryptUint32(0));
-        riskScore = FHE.add(riskScore, heightScore);
-        
-        // Blood pressure factor: systolic > 140 or diastolic > 90 = +15
-        ebool highSystolic = FHE.gt(data.systolic, FHE.encryptUint32(140));
-        ebool highDiastolic = FHE.gt(data.diastolic, FHE.encryptUint32(90));
-        ebool highBP = FHE.or(highSystolic, highDiastolic);
-        euint32 bpScore = FHE.select(highBP, FHE.encryptUint32(15), FHE.encryptUint32(0));
-        riskScore = FHE.add(riskScore, bpScore);
-        
-        // Cholesterol factor: LDL > 160 = +10, HDL < 40 = +10
-        ebool highLDL = FHE.gt(data.ldlCholesterol, FHE.encryptUint32(160));
-        ebool lowHDL = FHE.lt(data.hdlCholesterol, FHE.encryptUint32(40));
-        euint32 cholScore = FHE.add(
-            FHE.select(highLDL, FHE.encryptUint32(10), FHE.encryptUint32(0)),
-            FHE.select(lowHDL, FHE.encryptUint32(10), FHE.encryptUint32(0))
-        );
-        riskScore = FHE.add(riskScore, cholScore);
-        
-        // Triglycerides factor: > 200 = +8
-        ebool highTriglycerides = FHE.gt(data.triglycerides, FHE.encryptUint32(200));
-        euint32 trigScore = FHE.select(highTriglycerides, FHE.encryptUint32(8), FHE.encryptUint32(0));
-        riskScore = FHE.add(riskScore, trigScore);
-        
-        // Total cholesterol factor: > 240 = +12
-        ebool highTotalChol = FHE.gt(data.totalCholesterol, FHE.encryptUint32(240));
-        euint32 totalCholScore = FHE.select(highTotalChol, FHE.encryptUint32(12), FHE.encryptUint32(0));
-        riskScore = FHE.add(riskScore, totalCholScore);
-        
-        // Blood sugar factor: > 126 (diabetes) = +25, > 100 (prediabetes) = +10
-        ebool diabetes = FHE.gt(data.bloodSugar, FHE.encryptUint32(126));
-        ebool prediabetes = FHE.gt(data.bloodSugar, FHE.encryptUint32(100));
-        euint32 sugarScore = FHE.select(diabetes, FHE.encryptUint32(25),
-                            FHE.select(prediabetes, FHE.encryptUint32(10), FHE.encryptUint32(0)));
-        riskScore = FHE.add(riskScore, sugarScore);
-        
-        // Pulse rate factor: > 100 = +5, < 50 = +3 (both extremes are risky)
-        ebool highPulse = FHE.gt(data.pulseRate, FHE.encryptUint32(100));
-        ebool lowPulse = FHE.lt(data.pulseRate, FHE.encryptUint32(50));
-        euint32 pulseScore = FHE.add(
-            FHE.select(highPulse, FHE.encryptUint32(5), FHE.encryptUint32(0)),
-            FHE.select(lowPulse, FHE.encryptUint32(3), FHE.encryptUint32(0))
-        );
-        riskScore = FHE.add(riskScore, pulseScore);
-        
-        // Store the computed risk score
-        data.riskScore = riskScore;
-        data.scoreComputed = true;
-        
-        // Allow contract to access the risk score
-        FHE.allowThis(riskScore);
-        
-        emit RiskScoreComputed(user, insuranceCompany, block.timestamp);
-    }
+    require(insuranceCompanies[insuranceCompany].isRegistered, "Insurance company not registered");
+    require(userHealthData[user][insuranceCompany].dataSubmitted, "No health data submitted");
+    require(!userHealthData[user][insuranceCompany].scoreComputed, "Score already computed");
+    
+    HealthData storage data = userHealthData[user][insuranceCompany];
+    
+    // Initialize risk score with 0
+    euint32 riskScore = FHE.asEuint32(0);
+    
+    // Age factor (strongest factor): age * 2
+    euint32 ageScore = FHE.mul(data.age, 2);
+    riskScore = FHE.add(riskScore, ageScore);
+    
+    // Gender factor: male = +10, female = +0
+    euint32 genderScore = FHE.mul(data.gender, 10);
+    riskScore = FHE.add(riskScore, genderScore);
+    
+    // Weight-based risk - USE SCALAR COMPARISONS
+    ebool heavyWeight = FHE.gt(data.weight, 90); // Scalar comparison with plaintext 90
+    ebool moderateWeight = FHE.gt(data.weight, 75); // Scalar comparison with plaintext 75
+    euint32 weightScore = FHE.select(heavyWeight, FHE.asEuint32(20), 
+                         FHE.select(moderateWeight, FHE.asEuint32(10), FHE.asEuint32(0)));
+    riskScore = FHE.add(riskScore, weightScore);
+    
+    // Height-based adjustment - USE SCALAR COMPARISON
+    ebool shortHeight = FHE.lt(data.height, 160); // Scalar comparison
+    euint32 heightScore = FHE.select(shortHeight, FHE.asEuint32(5), FHE.asEuint32(0));
+    riskScore = FHE.add(riskScore, heightScore);
+    
+    // Blood pressure factor - USE SCALAR COMPARISONS
+    ebool highSystolic = FHE.gt(data.systolic, 140);
+    ebool highDiastolic = FHE.gt(data.diastolic, 90);
+    ebool highBP = FHE.or(highSystolic, highDiastolic);
+    euint32 bpScore = FHE.select(highBP, FHE.asEuint32(15), FHE.asEuint32(0));
+    riskScore = FHE.add(riskScore, bpScore);
+    
+    // Cholesterol factor - USE SCALAR COMPARISONS
+    ebool highLDL = FHE.gt(data.ldlCholesterol, 160);
+    ebool lowHDL = FHE.lt(data.hdlCholesterol, 40);
+    euint32 cholScore = FHE.add(
+        FHE.select(highLDL, FHE.asEuint32(10), FHE.asEuint32(0)),
+        FHE.select(lowHDL, FHE.asEuint32(10), FHE.asEuint32(0))
+    );
+    riskScore = FHE.add(riskScore, cholScore);
+    
+    // Triglycerides factor - USE SCALAR COMPARISON
+    ebool highTriglycerides = FHE.gt(data.triglycerides, 200);
+    euint32 trigScore = FHE.select(highTriglycerides, FHE.asEuint32(8), FHE.asEuint32(0));
+    riskScore = FHE.add(riskScore, trigScore);
+    
+    // Total cholesterol factor - USE SCALAR COMPARISON
+    ebool highTotalChol = FHE.gt(data.totalCholesterol, 240);
+    euint32 totalCholScore = FHE.select(highTotalChol, FHE.asEuint32(12), FHE.asEuint32(0));
+    riskScore = FHE.add(riskScore, totalCholScore);
+    
+    // Blood sugar factor - USE SCALAR COMPARISONS
+    ebool diabetes = FHE.gt(data.bloodSugar, 126);
+    ebool prediabetes = FHE.gt(data.bloodSugar, 100);
+    euint32 sugarScore = FHE.select(diabetes, FHE.asEuint32(25),
+                        FHE.select(prediabetes, FHE.asEuint32(10), FHE.asEuint32(0)));
+    riskScore = FHE.add(riskScore, sugarScore);
+    
+    // Pulse rate factor - USE SCALAR COMPARISONS
+    ebool highPulse = FHE.gt(data.pulseRate, 100);
+    ebool lowPulse = FHE.lt(data.pulseRate, 50);
+    euint32 pulseScore = FHE.add(
+        FHE.select(highPulse, FHE.asEuint32(5), FHE.asEuint32(0)),
+        FHE.select(lowPulse, FHE.asEuint32(3), FHE.asEuint32(0))
+    );
+    riskScore = FHE.add(riskScore, pulseScore);
+    
+    // Store the computed risk score
+    data.riskScore = riskScore;
+    data.scoreComputed = true;
+    
+    // Allow contract to access the risk score
+    FHE.allowThis(riskScore);
+    
+    emit RiskScoreComputed(user, insuranceCompany, block.timestamp);
+}
     
     /**
      * @notice Grant permission to insurance company to access risk score
